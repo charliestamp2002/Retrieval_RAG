@@ -7,4 +7,5 @@ pandas
 pyarrow
 tqdm
 faiss-cpu
+sentence-transformers
 python-dotenv
