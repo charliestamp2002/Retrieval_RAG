@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+transformers
+torch
+datasets
+pandas
+pyarrow
+tqdm
+faiss-cpu
+python-dotenv
