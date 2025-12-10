@@ -1,14 +1,7 @@
 
-"""
-Sparse (TF-IDF) retriever core logic.
+import sys 
+from pathlib import Path
 
-This module is intended to be used by the FastAPI layer, e.g.:
-
-    from .sparse_retriever import load_tfidf_index, tfidf_search
-
-    tfidf_index, meta_df = load_tfidf_index(ROOT_DIR)
-    results = tfidf_search("some query", tfidf_index, meta_df, top_k=10)
-"""
 
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
@@ -16,6 +9,8 @@ from typing import Dict, Any, List, Tuple
 import numpy as np
 import pandas as pd
 import pickle
+from datasets import load_dataset
+
 
 def tokenize(text: str) -> List[str]:
     """
@@ -23,6 +18,47 @@ def tokenize(text: str) -> List[str]:
     TODO: extend with better tokenisation / stopwords if needed.
     """
     return text.lower().split()
+
+
+def build_ground_truth(root_dir: Path, max_queries: int = 1000):
+    processed_dir = root_dir / "data" / "processed"
+    flat_path = processed_dir / "msmarco_passages.parquet"
+
+    df_flat = pd.read_parquet(flat_path)
+
+    rel_df = df_flat[df_flat["is_selected"] == 1]
+
+    # for each query_id, kepp only the set of doc_ids that are relevant: 
+
+    gt = (
+        rel_df.groupby("query_id")["doc_id"]
+        .apply(lambda s: set(s.tolist()))
+        .to_dict()
+    )
+
+    query_ids = list(gt.keys())[:max_queries]
+
+    gt_subset = {qid: gt[qid] for qid in query_ids}
+
+    print(gt_subset)
+
+    return gt_subset
+
+def build_query_texts(eval_query_ids): 
+    ds = load_dataset("microsoft/ms_marco", "v1.1", split="train")
+
+    query_dict = {}
+
+    eval_query_ids_set = set(eval_query_ids)
+    for row in ds:
+        qid = row["query_id"]
+        if qid in eval_query_ids_set:
+            query_dict[qid] = row["query"]
+            if len(query_dict) == len(eval_query_ids):
+                break
+
+    return query_dict
+
 
 
 # Loading TF-IDF index + metadata
@@ -66,14 +102,14 @@ def load_tfidf_index(root_dir: Path) -> Tuple[Dict[str, Dict[int, float]], pd.Da
             )
         meta_df = pd.read_parquet(chunked_path)
 
-    # # Sanity check
-    # required_cols = ["doc_id", "chunk_id", "chunk_text"]
-    # for col in required_cols:
-    #     if col not in meta_df.columns:
-    #         raise ValueError(
-    #             f"Column '{col}' not found in metadata DataFrame. "
-    #             f"Available columns: {meta_df.columns.tolist()}"
-    #         )
+    # Sanity check
+    required_cols = ["doc_id", "chunk_id", "chunk_text"]
+    for col in required_cols:
+        if col not in meta_df.columns:
+            raise ValueError(
+                f"Column '{col}' not found in metadata DataFrame. "
+                f"Available columns: {meta_df.columns.tolist()}"
+            )
 
     return tfidf_index, meta_df
 
@@ -209,3 +245,105 @@ def tfidf_search(
         results.append(result)
 
     return results
+
+
+def reciprocal_rank_at_k(ranked_doc_ids, relevant_docs, k):
+
+    topk =ranked_doc_ids[:k]
+
+    for i, doc_id in enumerate(topk):
+        if doc_id in relevant_docs:
+            return 1.0 / (i + 1)
+    
+    return 0.0
+
+def hit_at_k(ranked_doc_ids, relevant_docs, k):
+    topk = ranked_doc_ids[:k]
+    return 1.0 if any(doc_id in relevant_docs for doc_id in topk) else 0.0
+
+
+def recall_at_k(ranked_doc_ids, relevant_docs, k):
+    if not relevant_docs:
+        return 0.0
+    topk = ranked_doc_ids[:k]
+    hits = len(set(topk) & relevant_docs)
+    return hits / float(len(relevant_docs))
+
+
+    
+
+
+def main(): 
+
+    ROOT_DIR = Path(__file__).resolve().parents[2]
+    # sys.path.append(str(ROOT_DIR / "backend" / "app"))
+    # from core.sparse_retriever import load_tfidf_index, tfidf_search
+
+    tfidf_index, meta_df = load_tfidf_index(ROOT_DIR)
+
+    max_eval_queries = 500
+    gt = build_ground_truth(ROOT_DIR, max_queries=max_eval_queries)
+    eval_query_ids = list(gt.keys())
+
+    # Build maping query_ids to query text
+    query_dict = build_query_texts(eval_query_ids)
+
+    k = 10
+
+    recalls = []
+    mrrs = []
+    hits = []
+
+    for qid in eval_query_ids:
+        query_text = query_dict.get(qid)
+        if query_text is None:
+            continue
+        
+        relevant_docs = gt[qid]
+
+        results = tfidf_search(
+            query=query_text,
+            tfidf_index=tfidf_index,
+            meta_df=meta_df,
+            top_k=100,
+        )
+
+        ranked_chunks = [r["doc_id"] for r in results]
+
+        ranked_doc_ids = []
+        seen = set()
+        for doc_id in ranked_chunks: 
+            if doc_id not in seen: 
+                seen.add(doc_id)
+                ranked_doc_ids.append(doc_id)
+
+        recalls.append(recall_at_k(ranked_doc_ids, relevant_docs, k))
+        mrrs.append(reciprocal_rank_at_k(ranked_doc_ids, relevant_docs, k))
+        hits.append(hit_at_k(ranked_doc_ids, relevant_docs, k))
+
+        print(f"Evaluated {len(recalls)} queries.")
+        print(f"TF-IDF Recall@{k}: {np.mean(recalls):.4f}")
+        print(f"TF-IDF MRR@{k}:    {np.mean(mrrs):.4f}")
+        print(f"TF-IDF Hit@{k}:    {np.mean(hits):.4f}")
+
+    print(f"Final TF-IDF Recall@{k}: {np.mean(recalls):.4f}")
+    print(f"Final TF-IDF MRR@{k}:    {np.mean(mrrs):.4f}")
+    print(f"Final TF-IDF Hit@{k}:    {np.mean(hits):.4f}")
+
+
+    # print("Columns in meta_df:")
+    # print(meta_df.columns.tolist())
+    # print("\nFirst few rows:")
+    # print(meta_df.head())
+
+    # results = tfidf_search(
+    #     query="The ballad of the white horse",
+    #     tfidf_index = tfidf_index,
+    #     meta_df = meta_df,
+    #     top_k=100,
+    # )
+
+    # print(results[0]["is_selected"])
+
+if __name__ == "__main__":
+    main()
