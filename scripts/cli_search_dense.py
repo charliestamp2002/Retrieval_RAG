@@ -26,26 +26,60 @@ INDEX_DIR = ROOT_DIR / "data" / "index"
 MODEL_NAME = "intfloat/e5-base-v2"
 
 
-def load_dense_artifacts():
+def load_dense_artifacts(corpus: str):
     """
     Load FAISS index + E5 model + metadata and chunked text.
     """
-    index_path = INDEX_DIR / "msmarco_e5_faiss.index"
-    meta_path = EMB_DIR / "msmarco_e5_meta.parquet"
-    chunked_path = DATA_PROCESSED_DIR / "msmarco_passages_chunked.parquet"
+    # index_path = INDEX_DIR / "msmarco_e5_faiss.index"
+    # meta_path = EMB_DIR / "msmarco_e5_meta.parquet"
+    # chunked_path = DATA_PROCESSED_DIR / "msmarco_passages_chunked.parquet"
 
-    if not index_path.exists():
-        raise FileNotFoundError(
-            f"{index_path} not found. Run scripts/build_faiss_index.py first."
-        )
-    if not meta_path.exists():
-        raise FileNotFoundError(
-            f"{meta_path} not found. Run scripts/build_e5_embeddings.py first."
-        )
-    if not chunked_path.exists():
-        raise FileNotFoundError(
-            f"{chunked_path} not found. Run scripts/chunk_documents.py first."
-        )
+
+    if corpus == "msmarco":
+        processed = ROOT_DIR / "data" / "processed"
+        emb = ROOT_DIR / "data" / "embeddings"
+        index = ROOT_DIR / "data" / "index"
+
+        index_path = index / "msmarco_e5_faiss.index"
+        meta_path = emb / "msmarco_e5_meta.parquet"
+        chunked_path = processed / "msmarco_passages_chunked.parquet"
+
+        if not index_path.exists():
+            raise FileNotFoundError(
+                f"{index_path} not found. Run scripts/build_faiss_index.py first."
+            )
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"{meta_path} not found. Run scripts/build_e5_embeddings.py first."
+            )
+        if not chunked_path.exists():
+            raise FileNotFoundError(
+                f"{chunked_path} not found. Run scripts/chunk_documents.py first."
+            )
+
+    elif corpus == "my_corpus":
+        base = ROOT_DIR / "data" / "my_corpus"
+        index_path = base / "index" / "personal_e5_faiss.index"
+        meta_path = base / "embeddings" / "personal_e5_meta.parquet"
+        chunked_path = base / "processed" / "personal_documents_chunked.parquet"
+
+        if not index_path.exists():
+            raise FileNotFoundError(
+                f"{index_path} not found. Run scripts/build_faiss_index_my_corpus.py first."
+            )
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"{meta_path} not found. Run scripts/build_e5_embeddings_my_corpus.py first."
+            )
+        if not chunked_path.exists():
+            raise FileNotFoundError(
+                f"{chunked_path} not found. Run scripts/chunk_documents_my_corpus.py first."
+            )
+
+    else:
+        raise ValueError(f"Unknown corpus: {corpus}")
+
+
 
     print(f"Loading FAISS index from {index_path}")
     index = faiss.read_index(str(index_path))
@@ -86,11 +120,13 @@ def encode_query(model: SentenceTransformer, query: str) -> np.ndarray:
 
 def dense_search(
     query: str,
+    corpus: str,
     index: faiss.Index,
     model: SentenceTransformer,
     meta_df: pd.DataFrame,
     chunk_df: pd.DataFrame,
     top_k: int = 5,
+    
 ) -> List[Dict[str, Any]]:
     """
     Run dense retrieval for a single query and return top_k results with metadata.
@@ -114,53 +150,89 @@ def dense_search(
         meta_row = meta_df.iloc[int(idx)]
         chunk_row = chunk_df.iloc[int(idx)]
 
-        result = {
-            "rank": rank,
-            "score": float(score),
-            "doc_id": int(meta_row["doc_id"]),
-            "chunk_id": int(meta_row["chunk_id"]),
-            "chunk_text": str(chunk_row["chunk_text"]),
-            "query_id": meta_row.get("query_id", None),
-            "url": meta_row.get("url", None),
-            "is_selected": int(meta_row.get("is_selected", 0)),
-            "set": meta_row.get("set", None),
-        }
-        results.append(result)
+        if corpus == "msmarco":
 
+            result = {
+                "rank": rank,
+                "score": float(score),
+                "doc_id": int(meta_row["doc_id"]),
+                "chunk_id": int(meta_row["chunk_id"]),
+                "chunk_text": str(chunk_row["chunk_text"]),
+                "query_id": meta_row.get("query_id", None),
+                "url": meta_row.get("url", None),
+                "is_selected": int(meta_row.get("is_selected", 0)),
+                "set": meta_row.get("set", None),
+            }
+            results.append(result)
+        
+        else: 
+            result = {
+                "rank": rank,
+                "score": float(score),
+                "doc_id": int(meta_row["doc_id"]),
+                "chunk_id": int(meta_row["chunk_id"]),
+                "chunk_text": str(chunk_row["chunk_text"]),
+            }
+            results.append(result)
+      
     return results
 
 
 def main():
-    if len(sys.argv) > 1:
-        query = " ".join(sys.argv[1:])
-    else:
-        query = input("Enter a query: ").strip()
+
+    #  GENERAL INPUT = EITHER; 
+    #  python scripts/cli_search_dense.py "what is pitch control"
+    #  OR;
+    #  python scripts/cli_search_dense.py msmarco "what is pitch control"
+
+    DEFAULT_CORPUS = "my_corpus"
+
+    if len(sys.argv) == 1:
+        # no args: prompt for query, default corpus
+        corpus = DEFAULT_CORPUS
+        query = input(f"Enter a query for corpus='{corpus}': ").strip()
         if not query:
             print("No query provided, exiting.")
             return
 
-    index, model, meta_df, chunk_df = load_dense_artifacts()
+    elif len(sys.argv) == 2:
+        # one arg: treat as query, use default corpus
+        corpus = DEFAULT_CORPUS
+        query = sys.argv[1]
+
+    else:
+        # two or more args:
+        # if first arg is a known corpus, use it; rest form query
+        first = sys.argv[1]
+        if first in ("msmarco", "my_corpus"):
+            corpus = first
+            query = " ".join(sys.argv[2:]).strip()
+        else:
+            corpus = DEFAULT_CORPUS
+            query = " ".join(sys.argv[1:]).strip()
+
+    if not query:
+        print("No query provided, exiting.")
+        return
+
+    index, model, meta_df, chunk_df = load_dense_artifacts(corpus)
 
     top_k = 5
     results = dense_search(
         query=query,
+        corpus = corpus,
         index=index,
         model=model,
         meta_df=meta_df,
         chunk_df=chunk_df,
-        top_k=top_k,
+        top_k=10,
     )
 
-    print(f"\nTop {top_k} results:")
+    print(f"\nTop results for corpus='{corpus}':")
     for r in results:
         print("=" * 80)
-        print(
-            f"Rank {r['rank']} | score={r['score']:.4f} "
-            f"| doc_id={r['doc_id']} | chunk_id={r['chunk_id']} "
-            f"| is_selected={r['is_selected']}"
-        )
+        print(f"Rank {r['rank']} | score={r['score']:.4f} | doc_id={r['doc_id']} | chunk_id={r['chunk_id']}")
         print(r["chunk_text"][:400], "...")
-
 
 if __name__ == "__main__":
     main()

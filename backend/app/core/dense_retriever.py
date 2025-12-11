@@ -21,7 +21,9 @@ from sentence_transformers import SentenceTransformer
 def load_dense_index(
     root_dir: Path,
     model_name: str = "intfloat/e5-base-v2",
-) -> Tuple[faiss.Index, SentenceTransformer, pd.DataFrame, pd.DataFrame]:
+    corpus: str = "msmarco",
+):
+    
     """
     Load FAISS index, E5 model, metadata, and chunked text.
 
@@ -35,26 +37,75 @@ def load_dense_index(
         meta_df: DataFrame loaded from ms_marco_e5_meta.parquet (doc_id, chunk_id, etc.).
         chunk_df: DataFrame loaded from msmarco_passages_chunked.parquet (includes chunk_text).
     """
-    emb_dir = root_dir / "data" / "embeddings"
-    index_dir = root_dir / "data" / "index"
-    processed_dir = root_dir / "data" / "processed"
+    if corpus == "msmarco":
+        emb_dir = root_dir / "data" / "embeddings"
+        index_dir = root_dir / "data" / "index"
+        processed_dir = root_dir / "data" / "processed"
 
-    index_path = index_dir / "msmarco_e5_faiss.index"
-    meta_path = emb_dir / "msmarco_e5_meta.parquet"
-    chunked_path = processed_dir / "msmarco_passages_chunked.parquet"
+        index_path = index_dir / "msmarco_e5_faiss.index"
+        meta_path = emb_dir / "msmarco_e5_meta.parquet"
+        chunked_path = processed_dir / "msmarco_passages_chunked.parquet"
 
-    if not index_path.exists():
-        raise FileNotFoundError(
-            f"{index_path} not found. Run scripts/build_faiss_index.py first."
-        )
-    if not meta_path.exists():
-        raise FileNotFoundError(
-            f"{meta_path} not found. Run scripts/build_e5_embeddings.py first."
-        )
-    if not chunked_path.exists():
-        raise FileNotFoundError(
-            f"{chunked_path} not found. Run scripts/chunk_documents.py first."
-        )
+        if not index_path.exists():
+            raise FileNotFoundError(
+                f"{index_path} not found. Run scripts/build_faiss_index.py first."
+            )
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"{meta_path} not found. Run scripts/build_e5_embeddings.py first."
+            )
+        if not chunked_path.exists():
+            raise FileNotFoundError(
+                f"{chunked_path} not found. Run scripts/chunk_documents.py first."
+            )
+
+
+    elif corpus == "my_corpus":
+        emb_dir = root_dir / "data" / "my_corpus" / "embeddings"
+        index_dir = root_dir / "data" / "my_corpus" / "index"
+        processed_dir = root_dir / "data" / "my_corpus" / "processed"
+
+        index_path = index_dir / "personal_e5_faiss.index"
+        meta_path = emb_dir / "personal_e5_meta.parquet"
+        chunked_path = processed_dir / "personal_documents_chunked.parquet"
+
+        if not index_path.exists():
+            raise FileNotFoundError(
+                f"{index_path} not found. Run scripts/build_faiss_index_my_corpus.py first."
+            )
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"{meta_path} not found. Run scripts/build_e5_embeddings_my_corpus.py first."
+            )
+        if not chunked_path.exists():
+            raise FileNotFoundError(
+                f"{chunked_path} not found. Run scripts/chunk_documents_my_corpus.py first."
+            )
+
+    else:
+        raise ValueError(f"Unknown corpus: {corpus}")
+
+
+    # emb_dir = root_dir / "data" / "embeddings"
+    # index_dir = root_dir / "data" / "index"
+    # processed_dir = root_dir / "data" / "processed"
+
+    # index_path = index_dir / "msmarco_e5_faiss.index"
+    # meta_path = emb_dir / "msmarco_e5_meta.parquet"
+    # chunked_path = processed_dir / "msmarco_passages_chunked.parquet"
+
+    # if not index_path.exists():
+    #     raise FileNotFoundError(
+    #         f"{index_path} not found. Run scripts/build_faiss_index.py first."
+    #     )
+    # if not meta_path.exists():
+    #     raise FileNotFoundError(
+    #         f"{meta_path} not found. Run scripts/build_e5_embeddings.py first."
+    #     )
+    # if not chunked_path.exists():
+    #     raise FileNotFoundError(
+    #         f"{chunked_path} not found. Run scripts/chunk_documents.py first."
+    #     )
 
     print(f"Loading FAISS index from {index_path}")
     index = faiss.read_index(str(index_path))

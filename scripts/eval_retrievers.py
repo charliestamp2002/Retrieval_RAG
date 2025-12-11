@@ -25,6 +25,7 @@ from datasets import load_dataset
 
 from backend.app.core.sparse_retriever import load_tfidf_index, tfidf_search
 from backend.app.core.dense_retriever import load_dense_index, dense_search
+from backend.app.core.reranker import load_reranker, rerank
 
 
 def recall_at_k(ranked_doc_ids: List[int], relevant_docs: Set[int], k: int) -> float:
@@ -189,13 +190,12 @@ def evaluate_retriever(
     print(f"  Hit@{top_k_eval}:    {np.mean(hits):.4f}")
 
 def main() -> None:
-    ROOT_DIR = Path(__file__).resolve().parents[1]
 
     print("Loading sparse TF-IDF artifacts...")
     tfidf_index, tfidf_meta_df = load_tfidf_index(ROOT_DIR)
 
     print("Loading dense E5 + FAISS artifacts...")
-    dense_index, dense_model, dense_meta_df, dense_chunk_df = load_dense_index(ROOT_DIR)
+    dense_index, dense_model, dense_meta_df, dense_chunk_df = load_dense_index(ROOT_DIR, corpus="msmarco")
 
     print("Building ground truth...")
     gt = build_ground_truth(ROOT_DIR, max_queries=500)
@@ -216,11 +216,35 @@ def main() -> None:
             dense_chunk_df,
             top_k=top_k,
         )
+    
+    reranker_model = load_reranker()
+    
+    def dense_plus_rerank_search_fn(query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+
+        dense_candidates = dense_search(
+            query=query,
+            index=dense_index,
+            model=dense_model,
+            meta_df=dense_meta_df,
+            chunk_df=dense_chunk_df,
+            top_k=50,  # candidate pool
+        )
+    
+        reranked = rerank(
+            query = query,
+            candidates = dense_candidates,
+            model = reranker_model,
+            top_k = top_k,
+        )
+
+        return reranked
+
 
     k_eval = 10
 
     evaluate_retriever("TF-IDF (sparse)", sparse_search_fn, gt, query_texts, top_k_eval=k_eval)
     evaluate_retriever("E5 + FAISS (dense)", dense_search_fn, gt, query_texts, top_k_eval=k_eval)
+    evaluate_retriever("E5 + Reranker (dense + rerank)", dense_plus_rerank_search_fn, gt, query_texts, top_k_eval=k_eval)
 
 if __name__ == "__main__":
     main()
