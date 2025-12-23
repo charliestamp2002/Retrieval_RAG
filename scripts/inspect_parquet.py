@@ -1,9 +1,9 @@
 import pandas as pd
 
-PROCESSED_FILE = "data/processed/msmarco_passages_chunked.parquet"
+PROCESSED_FILE = "data/my_corpus/processed/personal_documents.parquet"
 EMBEDDING_FILE = "data/embeddings/tfidf_meta.parquet"
 
-df = pd.read_parquet(EMBEDDING_FILE)
+df = pd.read_parquet(PROCESSED_FILE)
 
 print(df.head(15))  # First 5 rows
 # print(df.info())  # Column names, types, non-null counts

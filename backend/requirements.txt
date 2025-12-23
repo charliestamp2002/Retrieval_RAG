@@ -9,7 +9,13 @@ tqdm
 faiss-cpu
 sentence-transformers
 python-dotenv
-pickle
 pypdf
 transformers
 accelerate
+
+# Image OCR support (using lightweight Tesseract instead of PaddleOCR)
+pytesseract>=0.3.10
+# paddleocr>=2.7.0  # Replaced with pytesseract for lower memory usage
+# pix2text>=1.1.1   # Optional: Uncomment for LaTeX math OCR (higher memory usage)
+pdf2image>=1.16.3
+pillow-heif>=0.18.0

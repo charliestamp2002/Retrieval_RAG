@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal
 
 from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.app.core.sparse_retriever import load_tfidf_index, tfidf_search
@@ -62,6 +63,14 @@ class RagResponse(BaseModel):
 
 
 app = FastAPI(title="Retrieval RAG API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def load_indices_on_startup() -> None:
