@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from backend.app.core.sparse_retriever import load_tfidf_index, tfidf_search
 from backend.app.core.dense_retriever import load_dense_index, dense_search
+from backend.app.core.config import settings
 
 from backend.app.core.reranker import load_reranker, rerank as rerank_fn
 from backend.app.core.rag import build_context_from_chunks, generate_answer_hf
@@ -76,8 +77,16 @@ app.add_middleware(
 def load_indices_on_startup() -> None:
     """
     Load TF-IDF and dense E5 indices + metadata at app startup.
+
+    Supports loading from S3 or local files based on STORAGE_MODE setting.
     """
-    root_dir = Path(__file__).resolve().parents[2]  # backend/app -> project root
+    print(f"[startup] Storage mode: {settings.storage_mode}")
+    if settings.storage_mode == "s3":
+        print(f"[startup] S3 bucket: {settings.s3_bucket}")
+        print(f"[startup] AWS region: {settings.aws_region}")
+
+    # root_dir only needed for local mode
+    root_dir = Path(__file__).resolve().parents[2] if settings.storage_mode == "local" else None
 
     # Load sparse / TF-IDF artifacts (only MSMarco for now)
     print("[startup] Loading TF-IDF index + metadata...")
@@ -89,10 +98,6 @@ def load_indices_on_startup() -> None:
     print("[startup] Loading dense E5 + FAISS index + metadata (msmarco)...")
     ms_index, ms_model, ms_meta_df, ms_chunk_df = load_dense_index(root_dir, corpus="msmarco")
     app.state.dense_msmarco = (ms_index, ms_model, ms_meta_df, ms_chunk_df)
-    # app.state.dense_index = dense_index
-    # app.state.dense_model = dense_model
-    # app.state.dense_meta_df = dense_meta_df
-    # app.state.dense_chunk_df = dense_chunk_df
 
     # Load dense / E5 + FAISS artifacts (my_corpus)
     print("[startup] Loading dense E5 + FAISS index + metadata (my_corpus)...")
@@ -101,7 +106,7 @@ def load_indices_on_startup() -> None:
 
     app.state.reranker_model = load_reranker()
 
-    print("[startup] All indices loaded.")
+    print(f"[startup] All indices loaded successfully from {settings.storage_mode}.")
 
 @app.get("/health")
 def healthcheck() -> Dict[str, str]:

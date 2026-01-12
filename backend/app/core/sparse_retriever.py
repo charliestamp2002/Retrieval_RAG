@@ -1,4 +1,3 @@
-
 """
 Sparse (TF-IDF) retriever core logic.
 
@@ -11,11 +10,22 @@ This module is intended to be used by the FastAPI layer, e.g.:
 """
 
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Literal, Optional
 
 import numpy as np
 import pandas as pd
 import pickle
+
+from backend.app.core.config import settings
+from backend.app.core.s3_client import load_pickle_from_s3, load_parquet_from_s3
+
+
+# S3 key mappings for TF-IDF (MSMarco only)
+S3_PATHS = {
+    "tfidf_index": "embeddings/tfidf_index.pkl",
+    "tfidf_meta": "embeddings/tfidf_meta.parquet",
+    "chunks_fallback": "processed/msmarco_passages_chunked.parquet",
+}
 
 def tokenize(text: str) -> List[str]:
     """
@@ -27,18 +37,45 @@ def tokenize(text: str) -> List[str]:
 
 # Loading TF-IDF index + metadata
 
-def load_tfidf_index(root_dir: Path) -> Tuple[Dict[str, Dict[int, float]], pd.DataFrame]:
+def load_tfidf_index(
+    root_dir: Optional[Path] = None,
+    storage_mode: Optional[Literal["s3", "local"]] = None,
+) -> Tuple[Dict[str, Dict[int, float]], pd.DataFrame]:
     """
     Load TF-IDF index and associated metadata.
 
     Args:
-        root_dir: Project root directory (the one containing `data/`).
+        root_dir: Project root directory (the one containing `data/`). Required for local mode.
+        storage_mode: Where to load data from ("s3" or "local"). Defaults to settings.storage_mode.
 
     Returns:
         tfidf_index: dict mapping term -> dict[doc_id -> tfidf_weight]
         meta_df: DataFrame with at least columns:
                  ['doc_id', 'chunk_id', 'chunk_text', 'query_id', 'is_selected', 'url', 'set']
     """
+    # Use settings default if not specified
+    if storage_mode is None:
+        storage_mode = settings.storage_mode
+
+    # S3 loading path
+    if storage_mode == "s3":
+        print("[sparse_retriever] Loading TF-IDF from S3...")
+
+        tfidf_index = load_pickle_from_s3(S3_PATHS["tfidf_index"])
+
+        # Try to load tfidf_meta, fall back to chunked passages
+        try:
+            meta_df = load_parquet_from_s3(S3_PATHS["tfidf_meta"])
+        except Exception:
+            print("[S3] tfidf_meta not found, falling back to chunked passages")
+            meta_df = load_parquet_from_s3(S3_PATHS["chunks_fallback"])
+
+        return tfidf_index, meta_df
+
+    # Local file loading path (original behavior)
+    if root_dir is None:
+        raise ValueError("root_dir is required for local storage mode")
+
     emb_dir = root_dir / "data" / "embeddings"
     processed_dir = root_dir / "data" / "processed"
 
@@ -65,15 +102,6 @@ def load_tfidf_index(root_dir: Path) -> Tuple[Dict[str, Dict[int, float]], pd.Da
                 "You need ms_marco_passages_chunked.parquet for metadata."
             )
         meta_df = pd.read_parquet(chunked_path)
-
-    # # Sanity check
-    # required_cols = ["doc_id", "chunk_id", "chunk_text"]
-    # for col in required_cols:
-    #     if col not in meta_df.columns:
-    #         raise ValueError(
-    #             f"Column '{col}' not found in metadata DataFrame. "
-    #             f"Available columns: {meta_df.columns.tolist()}"
-    #         )
 
     return tfidf_index, meta_df
 

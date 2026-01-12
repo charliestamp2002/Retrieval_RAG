@@ -10,26 +10,47 @@ Usage (outside this module), e.g. in eval or FastAPI:
 """
 
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Literal, Optional
 
 import faiss
 import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 
+from backend.app.core.config import settings
+from backend.app.core.s3_client import load_faiss_from_s3, load_parquet_from_s3
+
+
+# S3 key mappings for each corpus
+S3_PATHS = {
+    "msmarco": {
+        "index": "index/msmarco_e5_faiss.index",
+        "meta": "embeddings/msmarco_e5_meta.parquet",
+        "chunks": "processed/msmarco_passages_chunked.parquet",
+    },
+    "my_corpus": {
+        "index": "index/my_corpus/personal_e5_faiss.index",
+        "meta": "embeddings/my_corpus/personal_e5_meta.parquet",
+        "chunks": "processed/my_corpus/personal_documents_chunked.parquet",
+    },
+}
+
 
 def load_dense_index(
-    root_dir: Path,
+    root_dir: Optional[Path] = None,
     model_name: str = "intfloat/e5-base-v2",
     corpus: str = "msmarco",
+    storage_mode: Optional[Literal["s3", "local"]] = None,
 ):
     
     """
     Load FAISS index, E5 model, metadata, and chunked text.
 
     Args:
-        root_dir: Project root directory (the one containing `data/`).
+        root_dir: Project root directory (the one containing `data/`). Required for local mode.
         model_name: Hugging Face / sentence-transformers model name.
+        corpus: Which corpus to load ("msmarco" or "my_corpus").
+        storage_mode: Where to load data from ("s3" or "local"). Defaults to settings.storage_mode.
 
     Returns:
         index: FAISS index over passage embeddings.
@@ -37,6 +58,37 @@ def load_dense_index(
         meta_df: DataFrame loaded from ms_marco_e5_meta.parquet (doc_id, chunk_id, etc.).
         chunk_df: DataFrame loaded from msmarco_passages_chunked.parquet (includes chunk_text).
     """
+    # Use settings default if not specified
+    if storage_mode is None:
+        storage_mode = settings.storage_mode
+
+    # Validate corpus
+    if corpus not in S3_PATHS:
+        raise ValueError(f"Unknown corpus: {corpus}. Must be one of: {list(S3_PATHS.keys())}")
+
+    # S3 loading path
+    if storage_mode == "s3":
+        print(f"[dense_retriever] Loading {corpus} from S3...")
+        s3_keys = S3_PATHS[corpus]
+
+        index = load_faiss_from_s3(s3_keys["index"])
+        meta_df = load_parquet_from_s3(s3_keys["meta"])
+        chunk_df = load_parquet_from_s3(s3_keys["chunks"])
+
+        print(f"Loading E5 model: {model_name}")
+        model = SentenceTransformer(model_name)
+
+        if len(meta_df) != index.ntotal:
+            print(
+                f"WARNING: meta_df has {len(meta_df)} rows but index.ntotal = {index.ntotal}."
+            )
+
+        return index, model, meta_df, chunk_df
+
+    # Local file loading path (original behavior)
+    if root_dir is None:
+        raise ValueError("root_dir is required for local storage mode")
+
     if corpus == "msmarco":
         emb_dir = root_dir / "data" / "embeddings"
         index_dir = root_dir / "data" / "index"

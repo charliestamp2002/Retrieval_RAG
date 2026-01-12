@@ -9,6 +9,8 @@ tqdm
 faiss-cpu
 sentence-transformers
 python-dotenv
+boto3
+
 pypdf
 transformers
 accelerate
